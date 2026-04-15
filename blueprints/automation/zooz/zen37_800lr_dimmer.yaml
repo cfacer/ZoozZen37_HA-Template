@@ -66,7 +66,6 @@ trigger:
     event_data:
       device_id: !input remote
       command_class_name: "Central Scene"
-      label: "Scene"
       property_name: "scene"
       property_key_name: "001"
       value: "KeyHeldDown"
@@ -78,7 +77,6 @@ trigger:
     event_data:
       device_id: !input remote
       command_class_name: "Central Scene"
-      label: "Scene"
       property_name: "scene"
       property_key_name: "002"
       value: "KeyHeldDown"
@@ -119,7 +117,6 @@ action:
                 event_data:
                   device_id: !input remote
                   command_class_name: "Central Scene"
-                  label: "Scene"
                   property_name: "scene"
                   property_key_name: "001"
                   value: "KeyReleased"
@@ -173,7 +170,6 @@ action:
                 event_data:
                   device_id: !input remote
                   command_class_name: "Central Scene"
-                  label: "Scene"
                   property_name: "scene"
                   property_key_name: "002"
                   value: "KeyReleased"

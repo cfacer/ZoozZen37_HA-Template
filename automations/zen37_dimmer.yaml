@@ -46,7 +46,6 @@ trigger:
     event_data:
       device_id: YOUR_ZEN37_DEVICE_ID    # ← replace
       command_class_name: "Central Scene"
-      label: "Scene"
       property_name: "scene"
       property_key_name: "001"
       value: "KeyHeldDown"
@@ -58,7 +57,6 @@ trigger:
     event_data:
       device_id: YOUR_ZEN37_DEVICE_ID    # ← replace
       command_class_name: "Central Scene"
-      label: "Scene"
       property_name: "scene"
       property_key_name: "002"
       value: "KeyHeldDown"
@@ -95,8 +93,7 @@ action:
                 event_data:
                   device_id: YOUR_ZEN37_DEVICE_ID    # ← replace
                   command_class_name: "Central Scene"
-                  label: "Scene"
-                  property_name: "scene"
+                              property_name: "scene"
                   property_key_name: "001"
                   value: "KeyReleased"
             timeout:
@@ -142,8 +139,7 @@ action:
                 event_data:
                   device_id: YOUR_ZEN37_DEVICE_ID    # ← replace
                   command_class_name: "Central Scene"
-                  label: "Scene"
-                  property_name: "scene"
+                              property_name: "scene"
                   property_key_name: "002"
                   value: "KeyReleased"
             timeout:
