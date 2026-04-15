@@ -1,0 +1,207 @@
+blueprint:
+  name: "Zooz ZEN37 800LR — Hold-to-Dim"
+  description: >
+    Smooth brightness control using the Zooz ZEN37 800LR wall remote.
+
+
+    Hold **Button 1** (top large button) to ramp brightness **UP**;
+    hold **Button 2** (middle large button) to ramp brightness **DOWN**.
+    Releasing either button freezes the light at its current level.
+
+
+    Transition time is **proportional** — if the light is at 50 %, ramping to
+    100 % takes only half the configured time. Brightness at release is
+    computed mathematically from elapsed time rather than polling the bulb,
+    so it works even on devices that do not report mid-transition state.
+
+
+    Requires Home Assistant 2024.1+ and the Z-Wave JS integration.
+  domain: automation
+  author: cfacer
+  source_url: https://github.com/cfacer/ZoozZen37_HA-Template
+  homeassistant:
+    min_version: "2024.1.0"
+  input:
+    remote:
+      name: ZEN37 Remote
+      description: >
+        Your Zooz ZEN37 800LR wall remote as detected by Z-Wave JS.
+      selector:
+        device:
+          integration: zwave_js
+          manufacturer: Zooz
+    light_entity:
+      name: Light
+      description: The light entity to control.
+      selector:
+        entity:
+          domain: light
+    transition_time:
+      name: Full-Range Transition Time
+      description: >
+        Seconds to traverse the full 0 %–100 % brightness range.
+        Partial holds complete proportionally faster.
+        Default: 5 s.
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 30
+          step: 0.5
+          unit_of_measurement: s
+          mode: slider
+
+# Parallel mode so B1 and B2 events are always handled independently.
+mode: parallel
+max: 10
+
+variables:
+  _light: !input light_entity
+  _ttime: !input transition_time
+
+trigger:
+  # Button 1 (top large) held — dim UP
+  - platform: event
+    event_type: zwave_js_value_notification
+    event_data:
+      device_id: !input remote
+      command_class_name: "Central Scene"
+      label: "Scene"
+      property_name: "scene"
+      property_key_name: "001"
+      value: "KeyHeldDown"
+    id: b1_held
+
+  # Button 2 (middle large) held — dim DOWN
+  - platform: event
+    event_type: zwave_js_value_notification
+    event_data:
+      device_id: !input remote
+      command_class_name: "Central Scene"
+      label: "Scene"
+      property_name: "scene"
+      property_key_name: "002"
+      value: "KeyHeldDown"
+    id: b2_held
+
+action:
+  # Capture starting brightness as a percentage (0.0–100.0) at trigger time.
+  # Used to compute the proportional ramp duration for this hold.
+  - variables:
+      _bpct_start: >
+        {{ (state_attr(_light, 'brightness') | float(0) / 2.55) | round(1) }}
+
+  - choose:
+
+      # ── BUTTON 1 HELD: ramp brightness UP ──────────────────────────────────
+      - conditions:
+          - condition: trigger
+            id: b1_held
+        sequence:
+          # Proportional ramp: full range takes _ttime s; partial range is faster.
+          - variables:
+              _ramp_time: >
+                {{ [(_ttime * (100.0 - _bpct_start) / 100.0) | round(2), 0.1] | max }}
+              _t_start: "{{ now().timestamp() }}"
+
+          # Begin smooth transition toward maximum brightness.
+          - service: light.turn_on
+            target:
+              entity_id: "{{ _light }}"
+            data:
+              brightness_pct: 100
+              transition: "{{ _ramp_time }}"
+
+          # Wait for the matching Button 1 release; continue if never received.
+          - wait_for_trigger:
+              - platform: event
+                event_type: zwave_js_value_notification
+                event_data:
+                  device_id: !input remote
+                  command_class_name: "Central Scene"
+                  label: "Scene"
+                  property_name: "scene"
+                  property_key_name: "001"
+                  value: "KeyReleased"
+            timeout:
+              seconds: "{{ (_ramp_time + 2) | int }}"
+            continue_on_timeout: true
+
+          # Compute expected brightness at the moment of release using linear
+          # interpolation over elapsed time — no bulb state polling required.
+          - variables:
+              _elapsed: "{{ [now().timestamp() - _t_start, 0.0] | max }}"
+              _freeze_pct: >
+                {% set progress = (_elapsed / [_ramp_time, 0.1] | max) | min(1.0) %}
+                {% set pct = _bpct_start + progress * (100.0 - _bpct_start) %}
+                {{ [100, [pct | round(0) | int, 1] | max] | min }}
+
+          # Freeze the light at the calculated brightness.
+          - service: light.turn_on
+            target:
+              entity_id: "{{ _light }}"
+            data:
+              brightness_pct: "{{ _freeze_pct }}"
+              transition: 0.1
+
+      # ── BUTTON 2 HELD: ramp brightness DOWN ────────────────────────────────
+      - conditions:
+          - condition: trigger
+            id: b2_held
+          # Only act if the light is on and above the minimum (1 %).
+          - condition: template
+            value_template: "{{ is_state(_light, 'on') and _bpct_start > 1 }}"
+        sequence:
+          # Proportional ramp toward minimum brightness.
+          - variables:
+              _ramp_time: >
+                {{ [(_ttime * (_bpct_start - 1.0) / 100.0) | round(2), 0.1] | max }}
+              _t_start: "{{ now().timestamp() }}"
+
+          # Begin smooth transition toward minimum brightness.
+          - service: light.turn_on
+            target:
+              entity_id: "{{ _light }}"
+            data:
+              brightness_pct: 1
+              transition: "{{ _ramp_time }}"
+
+          # Wait for the matching Button 2 release; continue if never received.
+          - wait_for_trigger:
+              - platform: event
+                event_type: zwave_js_value_notification
+                event_data:
+                  device_id: !input remote
+                  command_class_name: "Central Scene"
+                  label: "Scene"
+                  property_name: "scene"
+                  property_key_name: "002"
+                  value: "KeyReleased"
+            timeout:
+              seconds: "{{ (_ramp_time + 2) | int }}"
+            continue_on_timeout: true
+
+          # Compute expected brightness at the moment of release.
+          - variables:
+              _elapsed: "{{ [now().timestamp() - _t_start, 0.0] | max }}"
+              _freeze_pct: >
+                {% set progress = (_elapsed / [_ramp_time, 0.1] | max) | min(1.0) %}
+                {% set pct = _bpct_start - progress * (_bpct_start - 1.0) %}
+                {{ [_bpct_start, [pct | round(0) | int, 1] | max] | min }}
+
+          # Turn off if at minimum; otherwise freeze at computed brightness.
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ _freeze_pct <= 1 }}"
+                sequence:
+                  - service: light.turn_off
+                    target:
+                      entity_id: "{{ _light }}"
+            default:
+              - service: light.turn_on
+                target:
+                  entity_id: "{{ _light }}"
+                data:
+                  brightness_pct: "{{ _freeze_pct }}"
+                  transition: 0.1
