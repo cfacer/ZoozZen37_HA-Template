@@ -11,33 +11,33 @@
 #   5. Replace every occurrence of YOUR_ZEN37_DEVICE_ID below with that value.
 #
 # USAGE:
-#   Hold Button 1 (top large)    → brightness ramps UP
-#   Hold Button 2 (middle large) → brightness ramps DOWN
+#   Hold Button 1 (top large)    → brightness ramps UP   (0 % → 100 %)
+#   Hold Button 2 (middle large) → brightness ramps DOWN (100 % → 0 % / off)
 #   Release either button        → brightness freezes at current level
 #
 # TUNING:
 #   _light  — change to your light entity ID
-#   _ttime  — seconds for a full 0 %→100 % traversal (default: 5)
+#   _ttime  — seconds for a full 0 %↔100 % traversal (default: 5)
 #
 # HOW IT WORKS (smoothing):
-#   On hold, a single light.turn_on is issued with a proportional transition
-#   toward the target (100 % up, 1 % down).  The automation then waits for
-#   the matching KeyReleased event.  At release, brightness is calculated
+#   On hold, a single service call starts a proportional-duration transition
+#   toward the target (100 % up, off/0 % down).  The automation then waits
+#   for the matching KeyReleased event.  At release, brightness is computed
 #   mathematically from elapsed time (linear interpolation) rather than
-#   polling the bulb, so freeze accuracy is independent of the bulb's
-#   mid-transition state reporting capability.
+#   polling the bulb, so freeze accuracy is independent of whether the bulb
+#   reports mid-transition state.
 # ══════════════════════════════════════════════════════════════════════════════
 
 alias: "ZEN37 — Hold-to-Dim: TV Lights"
 description: >
-  Hold B1 to ramp up, hold B2 to ramp down; release freezes brightness.
+  Hold B1 to ramp up, hold B2 to ramp down to off; release freezes brightness.
   Brightness at release is estimated via linear interpolation over elapsed time.
 mode: parallel
 max: 10
 
 variables:
   _light: light.tv_lights          # ← change if needed
-  _ttime: 5                        # ← seconds for full 0 %→100 % range
+  _ttime: 5                        # ← seconds for full 0 %↔100 % range
 
 trigger:
   # Button 1 (top large) held — dim UP
@@ -46,7 +46,6 @@ trigger:
     event_data:
       device_id: YOUR_ZEN37_DEVICE_ID    # ← replace
       command_class_name: "Central Scene"
-      label: "Scene"
       property_name: "scene"
       property_key_name: "001"
       value: "KeyHeldDown"
@@ -58,7 +57,6 @@ trigger:
     event_data:
       device_id: YOUR_ZEN37_DEVICE_ID    # ← replace
       command_class_name: "Central Scene"
-      label: "Scene"
       property_name: "scene"
       property_key_name: "002"
       value: "KeyHeldDown"
@@ -95,7 +93,6 @@ action:
                 event_data:
                   device_id: YOUR_ZEN37_DEVICE_ID    # ← replace
                   command_class_name: "Central Scene"
-                  label: "Scene"
                   property_name: "scene"
                   property_key_name: "001"
                   value: "KeyReleased"
@@ -106,7 +103,7 @@ action:
           - variables:
               _elapsed: "{{ [now().timestamp() - _t_start, 0.0] | max }}"
               _freeze_pct: >
-                {% set progress = (_elapsed / [_ramp_time, 0.1] | max) | min(1.0) %}
+                {% set progress = [_elapsed / ([_ramp_time, 0.1] | max), 1.0] | min %}
                 {% set pct = _bpct_start + progress * (100.0 - _bpct_start) %}
                 {{ [100, [pct | round(0) | int, 1] | max] | min }}
 
@@ -117,23 +114,22 @@ action:
               brightness_pct: "{{ _freeze_pct }}"
               transition: 0.1
 
-      # ── BUTTON 2 HELD: ramp DOWN ───────────────────────────────────────────
+      # ── BUTTON 2 HELD: ramp DOWN to OFF ───────────────────────────────────
       - conditions:
           - condition: trigger
             id: b2_held
           - condition: template
-            value_template: "{{ is_state(_light, 'on') and _bpct_start > 1 }}"
+            value_template: "{{ is_state(_light, 'on') and _bpct_start > 0 }}"
         sequence:
           - variables:
               _ramp_time: >
-                {{ [(_ttime * (_bpct_start - 1.0) / 100.0) | round(2), 0.1] | max }}
+                {{ [(_ttime * _bpct_start / 100.0) | round(2), 0.1] | max }}
               _t_start: "{{ now().timestamp() }}"
 
-          - service: light.turn_on
+          - service: light.turn_off
             target:
               entity_id: "{{ _light }}"
             data:
-              brightness_pct: 1
               transition: "{{ _ramp_time }}"
 
           - wait_for_trigger:
@@ -142,7 +138,6 @@ action:
                 event_data:
                   device_id: YOUR_ZEN37_DEVICE_ID    # ← replace
                   command_class_name: "Central Scene"
-                  label: "Scene"
                   property_name: "scene"
                   property_key_name: "002"
                   value: "KeyReleased"
@@ -153,14 +148,14 @@ action:
           - variables:
               _elapsed: "{{ [now().timestamp() - _t_start, 0.0] | max }}"
               _freeze_pct: >
-                {% set progress = (_elapsed / [_ramp_time, 0.1] | max) | min(1.0) %}
-                {% set pct = _bpct_start - progress * (_bpct_start - 1.0) %}
-                {{ [_bpct_start, [pct | round(0) | int, 1] | max] | min }}
+                {% set progress = [_elapsed / ([_ramp_time, 0.1] | max), 1.0] | min %}
+                {% set pct = _bpct_start * (1.0 - progress) %}
+                {{ [pct | round(0) | int, 0] | max }}
 
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ _freeze_pct <= 1 }}"
+                    value_template: "{{ _freeze_pct < 1 }}"
                 sequence:
                   - service: light.turn_off
                     target:

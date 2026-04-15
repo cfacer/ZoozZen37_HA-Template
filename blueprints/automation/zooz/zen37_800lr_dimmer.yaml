@@ -66,7 +66,6 @@ trigger:
     event_data:
       device_id: !input remote
       command_class_name: "Central Scene"
-      label: "Scene"
       property_name: "scene"
       property_key_name: "001"
       value: "KeyHeldDown"
@@ -78,7 +77,6 @@ trigger:
     event_data:
       device_id: !input remote
       command_class_name: "Central Scene"
-      label: "Scene"
       property_name: "scene"
       property_key_name: "002"
       value: "KeyHeldDown"
@@ -119,7 +117,6 @@ action:
                 event_data:
                   device_id: !input remote
                   command_class_name: "Central Scene"
-                  label: "Scene"
                   property_name: "scene"
                   property_key_name: "001"
                   value: "KeyReleased"
@@ -132,7 +129,7 @@ action:
           - variables:
               _elapsed: "{{ [now().timestamp() - _t_start, 0.0] | max }}"
               _freeze_pct: >
-                {% set progress = (_elapsed / [_ramp_time, 0.1] | max) | min(1.0) %}
+                {% set progress = [_elapsed / ([_ramp_time, 0.1] | max), 1.0] | min %}
                 {% set pct = _bpct_start + progress * (100.0 - _bpct_start) %}
                 {{ [100, [pct | round(0) | int, 1] | max] | min }}
 
@@ -144,26 +141,25 @@ action:
               brightness_pct: "{{ _freeze_pct }}"
               transition: 0.1
 
-      # ── BUTTON 2 HELD: ramp brightness DOWN ────────────────────────────────
+      # ── BUTTON 2 HELD: ramp brightness DOWN to OFF ─────────────────────────
       - conditions:
           - condition: trigger
             id: b2_held
-          # Only act if the light is on and above the minimum (1 %).
+          # Only act if the light is on.
           - condition: template
-            value_template: "{{ is_state(_light, 'on') and _bpct_start > 1 }}"
+            value_template: "{{ is_state(_light, 'on') and _bpct_start > 0 }}"
         sequence:
-          # Proportional ramp toward minimum brightness.
+          # Proportional ramp toward 0 %: full range takes _ttime s.
           - variables:
               _ramp_time: >
-                {{ [(_ttime * (_bpct_start - 1.0) / 100.0) | round(2), 0.1] | max }}
+                {{ [(_ttime * _bpct_start / 100.0) | round(2), 0.1] | max }}
               _t_start: "{{ now().timestamp() }}"
 
-          # Begin smooth transition toward minimum brightness.
-          - service: light.turn_on
+          # Begin smooth fade to off.
+          - service: light.turn_off
             target:
               entity_id: "{{ _light }}"
             data:
-              brightness_pct: 1
               transition: "{{ _ramp_time }}"
 
           # Wait for the matching Button 2 release; continue if never received.
@@ -173,7 +169,6 @@ action:
                 event_data:
                   device_id: !input remote
                   command_class_name: "Central Scene"
-                  label: "Scene"
                   property_name: "scene"
                   property_key_name: "002"
                   value: "KeyReleased"
@@ -182,18 +177,19 @@ action:
             continue_on_timeout: true
 
           # Compute expected brightness at the moment of release.
+          # Interpolates linearly from _bpct_start toward 0.
           - variables:
               _elapsed: "{{ [now().timestamp() - _t_start, 0.0] | max }}"
               _freeze_pct: >
-                {% set progress = (_elapsed / [_ramp_time, 0.1] | max) | min(1.0) %}
-                {% set pct = _bpct_start - progress * (_bpct_start - 1.0) %}
-                {{ [_bpct_start, [pct | round(0) | int, 1] | max] | min }}
+                {% set progress = [_elapsed / ([_ramp_time, 0.1] | max), 1.0] | min %}
+                {% set pct = _bpct_start * (1.0 - progress) %}
+                {{ [pct | round(0) | int, 0] | max }}
 
-          # Turn off if at minimum; otherwise freeze at computed brightness.
+          # Turn off if fade has reached zero; otherwise freeze at computed brightness.
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ _freeze_pct <= 1 }}"
+                    value_template: "{{ _freeze_pct < 1 }}"
                 sequence:
                   - service: light.turn_off
                     target:
